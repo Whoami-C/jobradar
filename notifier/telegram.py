@@ -4,7 +4,12 @@ import json
 import requests
 
 from core.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from database.database import definir_feedback, definir_metadado, obter_metadado
+from database.database import (
+    definir_feedback,
+    definir_metadado,
+    obter_metadado,
+    obter_resumo_monitoramento,
+)
 from core.logger import get_logger
 
 logger = get_logger()
@@ -252,7 +257,52 @@ def _parsear_callback_data(data: str) -> tuple[str, str] | None:
 _OFFSET_CHAVE = "telegram_update_offset"
 
 
-def processar_feedback_pendente():
+def _teclado_painel() -> dict:
+    return {"inline_keyboard": [
+        [{"text": "🔎 Buscar vagas agora", "callback_data": "cmd|buscar"}],
+        [{"text": "📊 Status", "callback_data": "cmd|status"},
+         {"text": "❓ Ajuda", "callback_data": "cmd|ajuda"}],
+    ]}
+
+
+def _enviar_painel() -> bool:
+    texto = (
+        "<b>📡 JobRadar Brasil</b>\n\n"
+        "Use os botões abaixo ou envie um comando:\n"
+        "/buscar — inicia uma busca agora\n"
+        "/status — mostra o estado do monitor\n"
+        "/painel — abre esta central novamente\n"
+        "/ajuda — lista os comandos\n\n"
+        "Vagas de maior relevância chegam na hora; as demais entram no resumo diário."
+    )
+    return enviar_mensagem(texto, reply_markup=_teclado_painel())
+
+
+def _enviar_status() -> bool:
+    total, pendentes, ultima = obter_resumo_monitoramento("brasil")
+    return enviar_mensagem(
+        "<b>📊 Status — JobRadar Brasil</b>\n\n"
+        "✅ Monitor configurado para vagas brasileiras\n"
+        f"📚 Vagas no histórico: {total}\n"
+        f"📋 Aguardando resumo diário: {pendentes}\n"
+        f"🕒 Última vaga registrada: {ultima or 'ainda não há vagas salvas'}",
+        reply_markup=_teclado_painel(),
+    )
+
+
+def configurar_comandos_bot() -> None:
+    """Publica os comandos no menu nativo do Telegram (operação idempotente)."""
+    _chamar_api_telegram("setMyCommands", {
+        "commands": json.dumps([
+            {"command": "painel", "description": "Abrir central do JobRadar"},
+            {"command": "buscar", "description": "Procurar vagas agora"},
+            {"command": "status", "description": "Ver status do monitor"},
+            {"command": "ajuda", "description": "Ver instruções"},
+        ])
+    })
+
+
+def processar_feedback_pendente() -> bool:
     """Consome os cliques em 👍/👎 desde o último ciclo. Sem webhook, sem
     servidor próprio — o cron de 3 em 3 horas do projeto (ver
     .github/workflows/jobradar.yml) já FAZ o papel de polling: cada
@@ -266,12 +316,12 @@ def processar_feedback_pendente():
     clique seria reprocessado em todo ciclo daqui pra frente.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
+        return False
 
     payload = {
         "timeout": 0,  # short poll -- só pergunta "tem algo pendente agora", não fica esperando
         "limit": 100,
-        "allowed_updates": json.dumps(["callback_query"]),
+        "allowed_updates": json.dumps(["callback_query", "message"]),
     }
     offset_salvo = obter_metadado(_OFFSET_CHAVE)
     if offset_salvo:
@@ -279,17 +329,32 @@ def processar_feedback_pendente():
 
     resultado = _chamar_api_telegram("getUpdates", payload)
     if resultado is None or not resultado.get("ok"):
-        return
+        return False
 
     updates = resultado.get("result", [])
     if not updates:
-        return
+        return False
 
     maior_update_id = None
+    busca_solicitada = False
     for update in updates:
         update_id = update.get("update_id")
         if update_id is not None:
             maior_update_id = update_id if maior_update_id is None else max(maior_update_id, update_id)
+
+        mensagem_recebida = update.get("message") or {}
+        chat_mensagem = str((mensagem_recebida.get("chat") or {}).get("id", ""))
+        partes_texto = (mensagem_recebida.get("text") or "").strip().split()
+        texto = partes_texto[0].lower() if partes_texto else ""
+        if chat_mensagem == str(TELEGRAM_CHAT_ID) and texto:
+            if texto in ("/start", "/painel", "/ajuda", "/help"):
+                _enviar_painel()
+            elif texto == "/status":
+                _enviar_status()
+            elif texto == "/buscar":
+                enviar_mensagem("🔎 Busca solicitada. Vou iniciar o ciclo Brasil agora.")
+                busca_solicitada = True
+            continue
 
         callback = update.get("callback_query")
         if not callback:
@@ -302,8 +367,19 @@ def processar_feedback_pendente():
         if not chat_id or chat_id != str(TELEGRAM_CHAT_ID):
             continue
 
-        parseado = _parsear_callback_data(callback.get("data", ""))
-        if parseado is not None:
+        dado_callback = callback.get("data", "")
+        novo_teclado = None
+        if dado_callback == "cmd|buscar":
+            texto_toast = "Busca solicitada."
+            enviar_mensagem("🔎 Busca solicitada. Vou iniciar o ciclo Brasil agora.")
+            busca_solicitada = True
+        elif dado_callback == "cmd|status":
+            texto_toast = "Status enviado."
+            _enviar_status()
+        elif dado_callback == "cmd|ajuda":
+            texto_toast = "Painel enviado."
+            _enviar_painel()
+        elif (parseado := _parsear_callback_data(dado_callback)) is not None:
             job_id, feedback = parseado
             definir_feedback(job_id, feedback)
             emoji = "👍" if feedback == "positivo" else "👎"
@@ -331,3 +407,4 @@ def processar_feedback_pendente():
 
     if maior_update_id is not None:
         definir_metadado(_OFFSET_CHAVE, str(maior_update_id))
+    return busca_solicitada

@@ -18,6 +18,7 @@ from database.database import (
     salvar_vaga,
 )
 from notifier.telegram import (
+    configurar_comandos_bot,
     enviar_digest,
     enviar_mensagem,
     notificar_vaga,
@@ -398,13 +399,10 @@ def main():
     parser = argparse.ArgumentParser(description="JobRadar - monitor de vagas")
     parser.add_argument(
         "--perfil",
-        required=True,
         nargs="+",
+        default=["brasil"],
         choices=sorted(PERFIS.keys()),
-        help=(
-            "Qual(is) mercado(s) rodar nesta execução — 'brasil', 'internacional', "
-            "ou os dois (--perfil brasil internacional)."
-        ),
+        help="Qual(is) mercado(s) rodar (padrão: brasil).",
     )
     parser.add_argument(
         "--once",
@@ -434,6 +432,8 @@ def main():
         enviar_mensagem(f"🛑 <b>JobRadar abortado</b>\n\nPerfis desta execução: {nomes}\n\n{e}")
         sys.exit(1)
 
+    configurar_comandos_bot()
+
     if args.once:
         _rodar_um_ciclo_de_cada(perfis_selecionados)
         return
@@ -441,7 +441,13 @@ def main():
     while True:
         _rodar_um_ciclo_de_cada(perfis_selecionados)
         logger.info(f"Aguardando {INTERVALO_MINUTOS} minutos até a próxima checagem...")
-        time.sleep(INTERVALO_MINUTOS * 60)
+        # Sem webhook/servidor: consulta comandos durante a espera e
+        # antecipa o próximo ciclo quando /buscar for solicitado.
+        for _ in range(INTERVALO_MINUTOS * 2):
+            time.sleep(30)
+            if processar_feedback_pendente():
+                logger.info("Busca antecipada por comando do Telegram.")
+                break
 
 
 if __name__ == "__main__":

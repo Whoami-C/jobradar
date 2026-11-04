@@ -113,8 +113,17 @@ python -m playwright install chromium
 Criar `.env` na raiz com `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` (via [@BotFather](https://t.me/BotFather)), depois:
 
 ```bash
-python main.py --perfil brasil internacional --once
+python main.py --once
 ```
+
+Por padrão o monitor pesquisa apenas vagas do Brasil. Para deixá-lo ativo
+continuamente no computador, execute `python main.py`. No Telegram, envie
+`/start` ou `/painel` para abrir a central com botões; `/buscar` antecipa uma
+busca e `/status` mostra o estado do monitor.
+
+No Windows, depois da instalação inicial, também é possível abrir
+`iniciar_jobradar.bat` com dois cliques. A janela deve permanecer aberta para
+que o comando `/buscar` seja atendido na hora.
 
 ## 🧪 Testes
 

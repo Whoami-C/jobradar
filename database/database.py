@@ -316,3 +316,19 @@ def marcar_digest_enviado(perfil_chave: str):
             "UPDATE vagas_vistas SET digest_pendente = 0 WHERE perfil = ? AND digest_pendente = 1",
             (perfil_chave,),
         )
+
+
+def obter_resumo_monitoramento(perfil_chave: str) -> tuple[int, int, str | None]:
+    """Retorna total de vagas, digest pendente e a última descoberta do perfil."""
+    with _conectar() as conn:
+        total, pendentes, ultima = conn.execute(
+            """
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN digest_pendente = 1 THEN 1 ELSE 0 END), 0),
+                   MAX(encontrada_em)
+            FROM vagas_vistas
+            WHERE perfil = ?
+            """,
+            (perfil_chave,),
+        ).fetchone()
+        return total, pendentes, ultima
