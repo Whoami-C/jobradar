@@ -11,3 +11,7 @@ _to_delete/
 *.pdf
 tmp/
 output/
+
+# Local caches and personal utilities
+.pytest_cache/
+/build_resume.py
